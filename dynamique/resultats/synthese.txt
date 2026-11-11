@@ -1,0 +1,31 @@
+Q1 — Qualité des ajustements
+
+methode  deviance  RMSE_log  Pearson_sur_ddl
+    SVD 3297.4728    0.1107           1.5350
+Poisson 3254.9932    0.1104           1.5093
+
+Q2 — Paramètres (constante, phi, sigma)
+
+{'SVD': (np.float64(-2.0624700951244255), np.float64(-0.5820491265122678), np.float64(2.032144758105443)), 'Poisson': (np.float64(-2.043830928413122), np.float64(-0.6001553632146606), np.float64(1.6273463566763433))}
+
+Q3 — Espérances de vie de période
+
+table  Brut 2023  Poisson     SVD      XR
+age                                      
+20        64.463   64.737  64.767  61.297
+30        54.590   54.859  54.883  51.655
+40        44.808   45.064  45.084  42.103
+50        35.273   35.509  35.522  32.787
+60        26.137   26.474  26.484  23.977
+70        17.699   18.003  18.005  16.093
+
+Q4 — Rentes à terme échu
+
+  table   moyenne  ecart_type       p01       p05       p95       p99
+    SVD 16266.694      42.976 16163.720 16193.385 16335.745 16362.886
+Poisson 16262.301      34.667 16179.889 16203.451 16318.278 16340.493
+     XR 15384.738       0.000       NaN       NaN       NaN       NaN
+
+Hypothèses : paramètres fixés, fermeture Gompertz après le dernier âge.
+
+Les intervalles reflètent les innovations futures de kappa.
