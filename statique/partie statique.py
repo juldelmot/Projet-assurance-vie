@@ -8,7 +8,6 @@ from scipy.optimize import minimize
 pd.set_option("display.precision", 8)
 pd.set_option("display.width", 200)
 from pathlib import Path
-import os
 import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
@@ -28,8 +27,6 @@ def sauvegarder_figure(nom):
 # Q1 - Modélisation par minimisation de l'erreur quadratique
 
 # Chargement et nettoyage des données issues du Human Mortality Database (HMD)
-from pathlib import Path
-DOSSIER = Path(__file__).parent
 
 deces = pd.read_csv(DOSSIER / "data" / "Deaths_1x1.txt", sep=r"\s+", skiprows=2, na_values=".")
 expo = pd.read_csv(DOSSIER / "data" / "Exposures_1x1.txt", sep=r"\s+", skiprows=2, na_values=".")
@@ -78,67 +75,30 @@ def depart(donnees):
     X = np.column_stack([np.ones(len(donnees)), donnees.age, np.maximum(donnees.age - 70, 0)])
     return np.linalg.lstsq(X, np.log(donnees.mu), rcond=None)[0]
 
-# 1) Version bridée (nombre d'itérations faible)
-def ajuster_mse_bride(donnees):
-    res = minimize(
-        mse, depart(donnees), args=(donnees.age.values, donnees.mu.values),
-        method="Nelder-Mead", options={"xatol": 1e-10, "fatol": 1e-14, "maxiter": 10}
-    )
-    return res.x
 
-# 2) Version convergence libre (nombre d'itérations élevé ; minimum mathématique global biaisé par les grands âges)
-def ajuster_mse_libre(donnees):
+def ajuster_mse(donnees):
     res = minimize(
         mse, depart(donnees), args=(donnees.age.values, donnees.mu.values),
         method="Nelder-Mead", options={"xatol": 1e-10, "fatol": 1e-14, "maxiter": 20000}
     )
+    assert res.success
     return res.x
 
-tableau_mse = pd.DataFrame({nom: ajuster_mse_bride(tab) for nom, tab in jeux.items()},
-                           index=["a", "b", "c"]).T
 
-tableau_mse_libre = pd.DataFrame({nom: ajuster_mse_libre(tab) for nom, tab in jeux.items()},
+tableau_mse = pd.DataFrame({nom: ajuster_mse(tab) for nom, tab in jeux.items()},
                                  index=["a", "b", "c"]).T
 
-print("\nParamètres optimisés par MSE (Version bridée)")
+print("\nParamètres optimisés par MSE")
 print(tableau_mse)
-tableau_mse.to_csv(RESULTATS / "parametres_mse_bridee.csv")
+tableau_mse.to_csv(RESULTATS / "parametres_mse.csv")
 
-print("\nParamètres optimisés par MSE (Version libre)")
-print(tableau_mse_libre)
-tableau_mse_libre.to_csv(RESULTATS / "parametres_mse_libre.csv")
-
-# Tableau comparatif des paramètres et des MSE pour justifier le choix
-tableau_comparatif_mse_choix = pd.DataFrame({
-    "MSE_bridee": [mse(tableau_mse.loc[nom], tab.age, tab.mu) for nom, tab in jeux.items()],
-    "MSE_libre": [mse(tableau_mse_libre.loc[nom], tab.age, tab.mu) for nom, tab in jeux.items()],
-}, index=jeux.keys())
-
-print("\nComparaison des valeurs de MSE :")
-print(tableau_comparatif_mse_choix)
-tableau_comparatif_mse_choix.to_csv(RESULTATS / "comparaison_valeurs_mse.csv")
- 
-# Graphique justificatif : MSE bridée vs MSE convergence libre
-fig, axes = plt.subplots(2, 2, figsize=(10, 8))
-for ax, (nom, tab) in zip(axes.flat, jeux.items()):
-    ax.plot(tab.age, np.log(tab.mu), "ko", ms=3, label="Taux bruts")
-    ax.plot(tab.age, np.log(mu_modele(tableau_mse.loc[nom], tab.age)), "r-", lw=2, 
-            label="MSE bridée (retenue)")
-    ax.plot(tab.age, np.log(mu_modele(tableau_mse_libre.loc[nom], tab.age)), "g:", lw=2, 
-            label="MSE libre (min. global)")
-    ax.set(xlabel="Âge", ylabel=r"$\ln(\mu_x)$", title=f"{nom} : Choix de l'optimisation MSE")
-    ax.legend(loc="upper left", frameon=False, fontsize=7)
-plt.tight_layout()
-sauvegarder_figure("Comparaison_MSE_bridee_vs_MSE_libre")
-
-# Justification du choix de la MSE bridée : 
-# Bien que l'optimisation en convergence libre atteigne un minimum mathématique global de la MSE, elle conduit à des déviations aberrantes vis-à-vis de la tendance démographique observée. 
-# Le choix d'une MSE bridée (limitée à quelques itérations) permet de privilégier la pertinence actuarielle : la courbe s'ajuste mieux aux taux bruts de mortalité, évitant ainsi des artefacts de modélisation irréalistes aux âges clés.
 
 # Espérance de vie (modèle MSE) 
-def esperance(parametres, x, age_max=120):
-    mu = mu_modele(parametres, np.arange(x, age_max))
-    return np.cumprod(np.exp(-mu)).sum()  # somme des probabilités de survie
+def esperance(parametres, x, age_max=105):
+  mu = mu_modele(parametres, np.arange(x, age_max))
+  survie_fin = np.exp(-np.cumsum(mu))
+  survie_debut = np.concatenate(([1.0], survie_fin[:-1]))
+  return np.sum(survie_debut * (-np.expm1(-mu)) / mu)
 
 ages = [40, 50, 60, 70]
 esperances_mse = pd.DataFrame(
@@ -197,8 +157,10 @@ print(esperances_log_like - esperances_mse)
 (esperances_log_like - esperances_mse).to_csv(RESULTATS / "ecart_esperances_loglike_mse.csv")
 
 def esperance_brute(tab, x, age_max=105):
-    mu = tab.mu[(tab.age >= x) & (tab.age <= age_max - 1)]
-    return np.cumprod(np.exp(-mu)).sum()
+  mu = tab.mu[(tab.age >= x) & (tab.age <= age_max - 1)].values
+  survie_fin = np.exp(-np.cumsum(mu))
+  survie_debut = np.concatenate(([1.0], survie_fin[:-1]))
+  return np.sum(survie_debut * (-np.expm1(-mu)) / mu)
 
 esperances_brutes = pd.DataFrame(
     {nom: [esperance_brute(tab, x) for x in ages] for nom, tab in jeux.items()},
@@ -220,18 +182,31 @@ print("\nBiais de l'espérance de vie (Log-Likelihood)")
 print(biais_esperance_log_like)
 biais_esperance_log_like.to_csv(RESULTATS / "biais_esperances_log_like.csv")
 
-# Graphique comparatif en échelle logarithmique (MSE vs Log-Likelihood vs brut) 
+# Graphique comparatif superposé (MSE vs Log-Likelihood) 
 fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 for ax, (nom, tab) in zip(axes.flat, jeux.items()):
-    ax.plot(tab.age, np.log(tab.mu), "ko", ms=3, label="Taux bruts")
-    ax.plot(tab.age, np.log(mu_modele(tableau_mse.loc[nom], tab.age)), "r-", lw=2, 
-            label="Modèle MSE")
-    ax.plot(tab.age, np.log(mu_modele(tableau_log_like.loc[nom], tab.age)), "b--", lw=2,
+    ax.plot(tab.age, tab.mu, "ko", ms=3, label="Taux bruts")
+    ax.plot(tab.age, mu_modele(tableau_mse.loc[nom], tab.age), "r-", lw=2, label="Modèle MSE")
+    ax.plot(tab.age, mu_modele(tableau_log_like.loc[nom], tab.age), "b--", lw=2,
             label="Modèle Log-Likelihood")
-    ax.set(xlabel="Âge", ylabel=r"$\ln(\mu_x)$", title=nom)
-    ax.legend(loc="upper left", frameon=False, fontsize=7)
+    ax.set(xlabel="Âge", ylabel=r"$\mu_x$", title=nom)
+    ax.legend(loc="upper left", frameon=False, fontsize=6)
 plt.tight_layout()
-sauvegarder_figure("Graphiques comparatifs entre méthodes")
+sauvegarder_figure("graphique_comparatif")
+
+# Graphique comparatif en échelle logarithmique 
+fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+for ax, (nom, tab) in zip(axes.flat, jeux.items()):
+    ax.plot(tab.age, tab.mu, "ko", ms=3, label="Taux bruts")
+    ax.plot(tab.age, mu_modele(tableau_mse.loc[nom], tab.age), "r-", lw=2, label="Modèle MSE")
+    ax.plot(tab.age, mu_modele(tableau_log_like.loc[nom], tab.age), "b--", lw=2,
+            label="Modèle Log-Likelihood")
+    ax.set_yscale("log")
+    ax.axvline(70, color="gray", ls=":", lw=1)  # âge du changement de pente (x = 70)
+    ax.set(xlabel="Âge", ylabel=r"$\mu_x$ (échelle log)", title=nom)
+    ax.legend(loc="upper left", frameon=False, fontsize=6)
+plt.tight_layout()
+sauvegarder_figure("graphique_comparatif_echelle_log")
 
 
 # Q3 - Tarification de rentes viagères temporaires et comparaison légale 
