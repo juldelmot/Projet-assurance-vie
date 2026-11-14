@@ -228,11 +228,11 @@ prix_log_like = pd.DataFrame({nom: [prix_rente(tableau_log_like.loc[nom], x) for
                               for nom in ["F2020", "F2023"]}, index=colonnes).T
 
 print("\nPrix des rentes (MSE)")
-print(prix_mse)
+print(prix_mse.round(2))
 prix_mse.to_csv(RESULTATS / "prix_rentes_mse.csv")
 
 print("\nPrix des rentes (Log-Likelihood)")
-print(prix_log_like)
+print(prix_log_like.round(2))
 prix_log_like.to_csv(RESULTATS / "prix_rentes_log_like.csv")
 
 
