@@ -2,15 +2,15 @@
 
 import numpy as np
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from pathlib import Path
 from scipy.optimize import minimize
 
 pd.set_option("display.precision", 8)
 pd.set_option("display.width", 200)
-from pathlib import Path
-import matplotlib
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt
+
 
 # Définition des dossiers de travail
 DOSSIER = Path(__file__).resolve().parent
@@ -23,6 +23,9 @@ def sauvegarder_figure(nom):
     plt.savefig(RESULTATS / nom, dpi=150)
     plt.close()
 
+# Fonction pour exporter un tableau au format LaTeX 
+def sauvegarder_tableau_tex(tableau, nom, format_nombres="%.2f"):
+    tableau.to_latex(RESULTATS / nom, float_format=format_nombres, escape=True)
 
 # Q1 - Modélisation par minimisation de l'erreur quadratique
 
@@ -91,6 +94,18 @@ tableau_mse = pd.DataFrame({nom: ajuster_mse(tab) for nom, tab in jeux.items()},
 print("\nParamètres optimisés par MSE")
 print(tableau_mse)
 tableau_mse.to_csv(RESULTATS / "parametres_mse.csv")
+sauvegarder_tableau_tex(tableau_mse, "parametres_mse.tex", "%.4f")
+
+# Graphique en échelle logarithmique : taux bruts et modèle ajusté par MSE 
+fig, axes = plt.subplots(2, 2, figsize=(9, 6.5))
+for ax, (nom, tab) in zip(axes.flat, jeux.items()):
+    ax.plot(tab.age, tab.mu, "ko", ms=3, label="Taux bruts")
+    ax.plot(tab.age, mu_modele(tableau_mse.loc[nom], tab.age), "r-", lw=2, label="Modèle MSE")
+    ax.set_yscale("log")
+    ax.axvline(70, color="gray", ls=":", lw=1)
+    ax.set(xlabel="Âge", ylabel=r"$\mu_x$ (échelle log)", title=nom)
+    ax.legend(loc="upper left", frameon=False, fontsize=6)
+sauvegarder_figure("graphique_mse_echelle_log.png")
 
 
 # Espérance de vie (modèle MSE) 
@@ -126,6 +141,7 @@ tableau_log_like = pd.DataFrame({nom: ajuster_log_like(tab) for nom, tab in jeux
 print("\nParamètres optimisés par log-vraisemblance")
 print(tableau_log_like)
 tableau_log_like.to_csv(RESULTATS / "parametres_log_vraisemblance.csv")
+sauvegarder_tableau_tex(tableau_log_like, "parametres_log_vraisemblance.tex", "%.4f")
 
 
 # Comparaison des MSE obtenues selon la méthode d'optimisation
@@ -136,7 +152,6 @@ comparaison_mse = pd.DataFrame({
 
 print("\nComparaison des valeurs de MSE")
 print(comparaison_mse)
-comparaison_mse.to_csv(RESULTATS / "comparaison_mse_vs_likelihood.csv")
 
 
 # Comparaison des espérances de vie et calcul des biais 
@@ -147,10 +162,12 @@ esperances_log_like = pd.DataFrame(
 print("\nEspérances de vie estimées (Modèle MSE)")
 print(esperances_mse)
 esperances_mse.to_csv(RESULTATS / "esperances_vie_mse.csv")
+sauvegarder_tableau_tex(esperances_mse, "esperances_vie_mse.tex")
 
 print("\nEspérances de vie estimées (Modèle Log-Vraisemblance)")
 print(esperances_log_like)
 esperances_log_like.to_csv(RESULTATS / "esperances_vie_log_like.csv")
+sauvegarder_tableau_tex(esperances_log_like, "esperances_vie_log_like.tex")
 
 print("\nÉcart (Log-Vraisemblance - MSE) sur les espérances de vie")
 print(esperances_log_like - esperances_mse)
@@ -169,6 +186,7 @@ esperances_brutes = pd.DataFrame(
 print("\nEspérances de vie brutes observées")
 print(esperances_brutes.round(2))
 esperances_brutes.round(2).to_csv(RESULTATS / "esperances_vie_brutes.csv")
+sauvegarder_tableau_tex(esperances_brutes, "esperances_vie_brutes.tex")
 
 # Calcul des biais de modélisation (Estimé - Observé)
 biais_esperance_mse = (esperances_mse - esperances_brutes).round(2)
@@ -177,10 +195,13 @@ biais_esperance_log_like = (esperances_log_like - esperances_brutes).round(2)
 print("\nBiais de l'espérance de vie (MSE)")
 print(biais_esperance_mse)
 biais_esperance_mse.to_csv(RESULTATS / "biais_esperances_mse.csv")
+sauvegarder_tableau_tex(biais_esperance_mse, "biais_esperances_mse.tex")
+
 
 print("\nBiais de l'espérance de vie (Log-Likelihood)")
 print(biais_esperance_log_like)
 biais_esperance_log_like.to_csv(RESULTATS / "biais_esperances_log_like.csv")
+sauvegarder_tableau_tex(biais_esperance_log_like, "biais_esperances_log_like.tex")
 
 # Graphique comparatif superposé (MSE vs Log-Likelihood) 
 fig, axes = plt.subplots(2, 2, figsize=(10, 8))
@@ -192,7 +213,7 @@ for ax, (nom, tab) in zip(axes.flat, jeux.items()):
     ax.set(xlabel="Âge", ylabel=r"$\mu_x$", title=nom)
     ax.legend(loc="upper left", frameon=False, fontsize=6)
 plt.tight_layout()
-sauvegarder_figure("graphique_comparatif")
+sauvegarder_figure("graphique_comparatif.png")
 
 # Graphique comparatif en échelle logarithmique 
 fig, axes = plt.subplots(2, 2, figsize=(10, 8))
@@ -206,7 +227,7 @@ for ax, (nom, tab) in zip(axes.flat, jeux.items()):
     ax.set(xlabel="Âge", ylabel=r"$\mu_x$ (échelle log)", title=nom)
     ax.legend(loc="upper left", frameon=False, fontsize=6)
 plt.tight_layout()
-sauvegarder_figure("graphique_comparatif_echelle_log")
+sauvegarder_figure("graphique_comparatif_echelle_log.png")
 
 
 # Q3 - Tarification de rentes viagères temporaires et comparaison légale 
@@ -230,10 +251,12 @@ prix_log_like = pd.DataFrame({nom: [prix_rente(tableau_log_like.loc[nom], x) for
 print("\nPrix des rentes (MSE)")
 print(prix_mse.round(2))
 prix_mse.round(2).to_csv(RESULTATS / "prix_rentes_mse.csv")
+sauvegarder_tableau_tex(prix_mse, "prix_rentes_mse.tex")
 
 print("\nPrix des rentes (Log-Likelihood)")
 print(prix_log_like.round(2))
 prix_log_like.round(2).to_csv(RESULTATS / "prix_rentes_log_like.csv")
+sauvegarder_tableau_tex(prix_log_like, "prix_rentes_log_like.tex")
 
 
 # Comparaison avec les tables de mortalité légales 
@@ -269,12 +292,16 @@ tableau_prix = pd.concat([
 print("\nSynthèse comparative des prix des rentes (€)")
 print(tableau_prix.round(0))
 tableau_prix.to_csv(RESULTATS / "synthese_prix_rentes.csv")
+sauvegarder_tableau_tex(
+    tableau_prix.rename(index=lambda n: "Table légale XR" if n == "Legal_XR" else n.replace("_", " ")),
+    "synthese_prix_rentes.tex")
 
 print("\nÉcart relatif au tarif réglementaire XR (%) - Modèle MSE")
 print(ecart_mse_XR_percent.round(1))
 ecart_mse_XR_percent.to_csv(RESULTATS / "ecarts_rentes_mse_xr_percent.csv")
+sauvegarder_tableau_tex(ecart_mse_XR_percent, "ecarts_rentes_mse_xr_percent.tex", "%.1f")
 
 print("\nÉcart relatif au tarif réglementaire XR (%) - Modèle Log-Likelihood")
 print(ecart_log_like_XR_percent.round(1))
 ecart_log_like_XR_percent.to_csv(RESULTATS / "ecarts_rentes_loglike_xr_percent.csv")
-
+sauvegarder_tableau_tex(ecart_log_like_XR_percent, "ecarts_rentes_loglike_xr_percent.tex", "%.1f")
