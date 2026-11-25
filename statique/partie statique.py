@@ -17,6 +17,9 @@ DOSSIER = Path(__file__).resolve().parent
 RESULTATS = DOSSIER / "resultats"
 RESULTATS.mkdir(exist_ok=True)
 
+# Fichiers attendus : data/Deaths_1x1.txt, data/Exposures_1x1.txt, data/table_XR.csv
+# Sorties : dossier resultats/ (figures .png et tableaux .tex pour le rapport)
+
 # Fonction pour sauvegarder les figures
 def sauvegarder_figure(nom):
     plt.tight_layout()
@@ -29,7 +32,7 @@ def sauvegarder_tableau_tex(tableau, nom, format_nombres="%.2f"):
 
 # Q1 - Modélisation par minimisation de l'erreur quadratique
 
-# Chargement et nettoyage des données issues du Human Mortality Database (HMD)
+# Chargement et nettoyage des données issues du Human Mortality Database 
 
 deces = pd.read_csv(DOSSIER / "data" / "Deaths_1x1.txt", sep=r"\s+", skiprows=2, na_values=".")
 expo = pd.read_csv(DOSSIER / "data" / "Exposures_1x1.txt", sep=r"\s+", skiprows=2, na_values=".")
@@ -41,14 +44,21 @@ expo["Age"] = expo["Age"].astype(str).str.replace("+", "", regex=False).astype(f
 
 # Taux bruts : fonction qui extrait une année et un sexe
 def donnees(annee, sexe):
+    """Extrait les taux bruts d'une année et d'un sexe.
+
+    Retourne un tableau (DataFrame) de 76 lignes, pour les âges 30 à 105, avec les colonnes :
+      - age  : âge x
+      - mu   : taux de mortalité brut, mu_hat_x = D_x / E_x (décès / exposition au risque)
+      - expo : exposition au risque E_x
+    Des vérifications (assert) contrôlent qu'on a 76 âges alignés entre décès et expositions, et des taux > 0.
+    """
     d = deces[(deces.Year == annee) & (deces.Age >= 30) & (deces.Age <= 105)]
     e = expo[(expo.Year == annee) & (expo.Age >= 30) & (expo.Age <= 105)]
     tab = pd.DataFrame({
         "age": d.Age.values,
-        "mu": d[sexe].values / e[sexe].values,  # taux brut = décès / exposition
+        "mu": d[sexe].values / e[sexe].values,  
         "expo": e[sexe].values,
     })
-    # Vérifications de cohérence : exactement 76 âges (30 à 105), âges alignés et taux strictement positifs
     assert len(tab) == 76 and (d.Age.values == e.Age.values).all() and (tab.mu > 0).all()
     return tab
 
@@ -66,7 +76,7 @@ def mu_modele(parametres, age):
     return np.exp(a + b * age + c * (age - 70) * (age >= 70))
 
 
-# L'erreur à minimiser (MSE) 
+# L'erreur quadratique moyenne entre les taux bruts et les taux du modèle à minimiser (MSE) 
 def mse(parametres, age, mu):
     return np.mean((mu - mu_modele(parametres, age)) ** 2)
  
@@ -74,12 +84,24 @@ def mse(parametres, age, mu):
 # Minimisation de la MSE 
 
 # Régression linéaire de log(mu) pour initialiser l'optimiseur
-def depart(donnees):   
+def depart(donnees):
+    """Point de départ (a, b, c) de l'optimiseur.
+
+    Le logarithme du modèle est linéaire en (a, b, c) :
+    ln(mu_x) = a + b*x + c*max(x - 70, 0).
+    On régresse donc ln(taux bruts) sur (1, x, max(x - 70, 0)) par moindres carrés ordinaires.
+    """   
     X = np.column_stack([np.ones(len(donnees)), donnees.age, np.maximum(donnees.age - 70, 0)])
     return np.linalg.lstsq(X, np.log(donnees.mu), rcond=None)[0]
 
 
 def ajuster_mse(donnees):
+    """Ajuste (a, b, c) en minimisant la MSE par la méthode de Nelder-Mead.
+
+    Critères d'arrêt stricts, avec au plus 20 000 itérations.
+    L'assertion vérifie que l'algorithme a convergé. 
+    Retourne le tableau (a, b, c).
+    """
     res = minimize(
         mse, depart(donnees), args=(donnees.age.values, donnees.mu.values),
         method="Nelder-Mead", options={"xatol": 1e-10, "fatol": 1e-14, "maxiter": 20000}
@@ -93,7 +115,6 @@ tableau_mse = pd.DataFrame({nom: ajuster_mse(tab) for nom, tab in jeux.items()},
 
 print("\nParamètres optimisés par MSE")
 print(tableau_mse)
-tableau_mse.to_csv(RESULTATS / "parametres_mse.csv")
 sauvegarder_tableau_tex(tableau_mse, "parametres_mse.tex", "%.4f")
 
 # Graphique en échelle logarithmique : taux bruts et modèle ajusté par MSE 
@@ -110,10 +131,16 @@ sauvegarder_figure("graphique_mse_echelle_log.png")
 
 # Espérance de vie (modèle MSE) 
 def esperance(parametres, x, age_max=105):
-  mu = mu_modele(parametres, np.arange(x, age_max))
-  survie_fin = np.exp(-np.cumsum(mu))
-  survie_debut = np.concatenate(([1.0], survie_fin[:-1]))
-  return np.sum(survie_debut * (-np.expm1(-mu)) / mu)
+    """Espérance de vie complète à l'âge x avec un modèle paramétrique.
+
+    On suppose mu constant sur chaque année d'âge. 
+    La somme est tronquée à age_max (105 ans).
+    Utilisée pour les paramètres MSE comme pour les paramètres de la log-vraisemblance.
+    """
+    mu = mu_modele(parametres, np.arange(x, age_max))
+    survie_fin = np.exp(-np.cumsum(mu))
+    survie_debut = np.concatenate(([1.0], survie_fin[:-1]))
+    return np.sum(survie_debut * (-np.expm1(-mu)) / mu)
 
 ages = [40, 50, 60, 70]
 esperances_mse = pd.DataFrame(
@@ -124,11 +151,22 @@ esperances_mse = pd.DataFrame(
 # Q2 - Modélisation par maximisation de la log-vraisemblance
 
 def negative_log_likelihood(theta, age, mu, expo):
+    """Moins la log-vraisemblance gaussienne -l(a, b, c).
+
+    SciPy ne sait que minimiser : on minimise -l pour maximiser l.
+    """
     mu_theo = mu_modele(theta, age)
     sigma_carre = mu_theo / expo  # Var(mu_hat) = mu / E_x (décès ~ Poisson(mu * E_x))
     return 0.5 * np.sum(np.log(2 * np.pi * sigma_carre) + (mu - mu_theo) ** 2 / sigma_carre)
 
 def ajuster_log_like(donnees):
+    """Ajuste (a, b, c) en maximisant la log-vraisemblance, donc en minimisant -l.
+
+    Même point de départ que pour la MSE (`depart`) et même algorithme (Nelder-Mead),
+    avec des tolérances de 1e-10 sur les paramètres et sur -l et au plus 20 000 itérations.
+    L'assertion vérifie que l'algorithme a convergé. 
+    Retourne le tableau (a, b, c).
+    """
     res = minimize(negative_log_likelihood, depart(donnees),
                    args=(donnees.age.values, donnees.mu.values, donnees.expo.values),
                    method="Nelder-Mead", options={"xatol": 1e-10, "fatol": 1e-10, "maxiter": 20000})
@@ -140,18 +178,7 @@ tableau_log_like = pd.DataFrame({nom: ajuster_log_like(tab) for nom, tab in jeux
                                 index=["a", "b", "c"]).T
 print("\nParamètres optimisés par log-vraisemblance")
 print(tableau_log_like)
-tableau_log_like.to_csv(RESULTATS / "parametres_log_vraisemblance.csv")
 sauvegarder_tableau_tex(tableau_log_like, "parametres_log_vraisemblance.tex", "%.4f")
-
-
-# Comparaison des MSE obtenues selon la méthode d'optimisation
-comparaison_mse = pd.DataFrame({
-    "MSE": [mse(tableau_mse.loc[nom], tab.age, tab.mu) for nom, tab in jeux.items()],
-    "MSE_via_likelihood": [mse(tableau_log_like.loc[nom], tab.age, tab.mu) for nom, tab in jeux.items()],
-}, index=jeux.keys())
-
-print("\nComparaison des valeurs de MSE")
-print(comparaison_mse)
 
 
 # Comparaison des espérances de vie et calcul des biais 
@@ -159,25 +186,34 @@ esperances_log_like = pd.DataFrame(
     {nom: [esperance(tableau_log_like.loc[nom], x) for x in ages] for nom in jeux},
     index=[f"e{x}" for x in ages]).T.round(2)
 
+
+# Vérification de l'effet de la troncature à 105 ans sur les espérances de vie du modèle
+ecart_max = max(abs(esperance(t.loc[nom], x, 120) - esperance(t.loc[nom], x, 105))
+                for t in (tableau_mse, tableau_log_like) for nom in jeux for x in ages)
+print(f"\nEffet maximal de la troncature à 105 ans : {ecart_max:.4f} an")
+
+
 print("\nEspérances de vie estimées (Modèle MSE)")
 print(esperances_mse)
-esperances_mse.to_csv(RESULTATS / "esperances_vie_mse.csv")
 sauvegarder_tableau_tex(esperances_mse, "esperances_vie_mse.tex")
 
 print("\nEspérances de vie estimées (Modèle Log-Vraisemblance)")
 print(esperances_log_like)
-esperances_log_like.to_csv(RESULTATS / "esperances_vie_log_like.csv")
 sauvegarder_tableau_tex(esperances_log_like, "esperances_vie_log_like.tex")
 
-print("\nÉcart (Log-Vraisemblance - MSE) sur les espérances de vie")
-print(esperances_log_like - esperances_mse)
-(esperances_log_like - esperances_mse).to_csv(RESULTATS / "ecart_esperances_loglike_mse.csv")
+
 
 def esperance_brute(tab, x, age_max=105):
-  mu = tab.mu[(tab.age >= x) & (tab.age <= age_max - 1)].values
-  survie_fin = np.exp(-np.cumsum(mu))
-  survie_debut = np.concatenate(([1.0], survie_fin[:-1]))
-  return np.sum(survie_debut * (-np.expm1(-mu)) / mu)
+    """Espérance de vie à l'âge x calculée directement avec les taux bruts.
+
+    Même formule et même troncature à age_max que `esperance`, mais avec les taux bruts
+    mu_hat_x = D_x / E_x au lieu des taux du modèle. 
+    Sert de référence pour calculer les biais.
+    """
+    mu = tab.mu[(tab.age >= x) & (tab.age <= age_max - 1)].values
+    survie_fin = np.exp(-np.cumsum(mu))
+    survie_debut = np.concatenate(([1.0], survie_fin[:-1]))
+    return np.sum(survie_debut * (-np.expm1(-mu)) / mu)
 
 esperances_brutes = pd.DataFrame(
     {nom: [esperance_brute(tab, x) for x in ages] for nom, tab in jeux.items()},
@@ -185,7 +221,6 @@ esperances_brutes = pd.DataFrame(
 
 print("\nEspérances de vie brutes observées")
 print(esperances_brutes.round(2))
-esperances_brutes.round(2).to_csv(RESULTATS / "esperances_vie_brutes.csv")
 sauvegarder_tableau_tex(esperances_brutes, "esperances_vie_brutes.tex")
 
 # Calcul des biais de modélisation (Estimé - Observé)
@@ -194,13 +229,11 @@ biais_esperance_log_like = (esperances_log_like - esperances_brutes).round(2)
 
 print("\nBiais de l'espérance de vie (MSE)")
 print(biais_esperance_mse)
-biais_esperance_mse.to_csv(RESULTATS / "biais_esperances_mse.csv")
 sauvegarder_tableau_tex(biais_esperance_mse, "biais_esperances_mse.tex")
 
 
 print("\nBiais de l'espérance de vie (Log-Likelihood)")
 print(biais_esperance_log_like)
-biais_esperance_log_like.to_csv(RESULTATS / "biais_esperances_log_like.csv")
 sauvegarder_tableau_tex(biais_esperance_log_like, "biais_esperances_log_like.tex")
 
 # Graphique comparatif superposé (MSE vs Log-Likelihood) 
@@ -215,7 +248,7 @@ for ax, (nom, tab) in zip(axes.flat, jeux.items()):
 plt.tight_layout()
 sauvegarder_figure("graphique_comparatif.png")
 
-# Graphique comparatif en échelle logarithmique 
+# Graphique comparatif en échelle logarithmique (MSE vs Log-Likelihood)
 fig, axes = plt.subplots(2, 2, figsize=(10, 8))
 for ax, (nom, tab) in zip(axes.flat, jeux.items()):
     ax.plot(tab.age, tab.mu, "ko", ms=3, label="Taux bruts")
@@ -250,12 +283,10 @@ prix_log_like = pd.DataFrame({nom: [prix_rente(tableau_log_like.loc[nom], x) for
 
 print("\nPrix des rentes (MSE)")
 print(prix_mse.round(2))
-prix_mse.round(2).to_csv(RESULTATS / "prix_rentes_mse.csv")
 sauvegarder_tableau_tex(prix_mse, "prix_rentes_mse.tex")
 
 print("\nPrix des rentes (Log-Likelihood)")
 print(prix_log_like.round(2))
-prix_log_like.round(2).to_csv(RESULTATS / "prix_rentes_log_like.csv")
 sauvegarder_tableau_tex(prix_log_like, "prix_rentes_log_like.tex")
 
 
@@ -264,6 +295,7 @@ sauvegarder_tableau_tex(prix_log_like, "prix_rentes_log_like.tex")
 xr = pd.read_csv(DOSSIER / "data" / "table_XR.csv")
 XR_lx = xr.set_index("age")["lx"]
 
+# Nombre de survivants l_x de la table légale XR aux âges x.
 def lx_XR(x):
     return XR_lx.loc[np.atleast_1d(x)].values.astype(float)
 
@@ -291,17 +323,14 @@ tableau_prix = pd.concat([
 
 print("\nSynthèse comparative des prix des rentes (€)")
 print(tableau_prix.round(0))
-tableau_prix.to_csv(RESULTATS / "synthese_prix_rentes.csv")
 sauvegarder_tableau_tex(
     tableau_prix.rename(index=lambda n: "Table légale XR" if n == "Legal_XR" else n.replace("_", " ")),
     "synthese_prix_rentes.tex")
 
 print("\nÉcart relatif au tarif réglementaire XR (%) - Modèle MSE")
 print(ecart_mse_XR_percent.round(1))
-ecart_mse_XR_percent.to_csv(RESULTATS / "ecarts_rentes_mse_xr_percent.csv")
 sauvegarder_tableau_tex(ecart_mse_XR_percent, "ecarts_rentes_mse_xr_percent.tex", "%.1f")
 
 print("\nÉcart relatif au tarif réglementaire XR (%) - Modèle Log-Likelihood")
 print(ecart_log_like_XR_percent.round(1))
-ecart_log_like_XR_percent.to_csv(RESULTATS / "ecarts_rentes_loglike_xr_percent.csv")
 sauvegarder_tableau_tex(ecart_log_like_XR_percent, "ecarts_rentes_loglike_xr_percent.tex", "%.1f")
