@@ -262,6 +262,18 @@ for ax, (nom, tab) in zip(axes.flat, jeux.items()):
 plt.tight_layout()
 sauvegarder_figure("graphique_comparatif_echelle_log.png")
 
+# Graphique : espérance de vie en fonction de l'âge (taux bruts, modèle MSE, modèle log-vraisemblance)
+ages_courbe = np.arange(30, 101)
+fig, axes = plt.subplots(2, 2, figsize=(9, 6.5))
+for ax, (nom, tab) in zip(axes.flat, jeux.items()):
+    ax.plot(ages_courbe, [esperance_brute(tab, x) for x in ages_courbe], "k-", lw=2, label="Taux bruts")
+    ax.plot(ages_courbe, [esperance(tableau_mse.loc[nom], x) for x in ages_courbe], "r-", lw=2, label="Modèle MSE")
+    ax.plot(ages_courbe, [esperance(tableau_log_like.loc[nom], x) for x in ages_courbe], "b--", lw=2,
+            label="Modèle log-vraisemblance")
+    ax.set(xlabel="Âge x", ylabel="Espérance de vie (années)", title=nom)
+    ax.legend(loc="upper right", frameon=False, fontsize=7)
+sauvegarder_figure("graphique_esperances_vie.png")
+
 
 # Q3 - Tarification de rentes viagères temporaires et comparaison légale 
 
@@ -334,3 +346,19 @@ sauvegarder_tableau_tex(ecart_mse_XR_percent, "ecarts_rentes_mse_xr_percent.tex"
 print("\nÉcart relatif au tarif réglementaire XR (%) - Modèle Log-Likelihood")
 print(ecart_log_like_XR_percent.round(1))
 sauvegarder_tableau_tex(ecart_log_like_XR_percent, "ecarts_rentes_loglike_xr_percent.tex", "%.1f")
+
+# Graphique : prix de la rente temporaire (20 ans, 1 000 euros/an) en fonction de l'âge de souscription
+ages_prix = np.arange(30, 76)   
+prix_XR_courbe = [prix_rente_legale(lx_XR, x) for x in ages_prix]
+fig, axes = plt.subplots(1, 2, figsize=(10, 3.6), sharey=True)
+for ax, nom in zip(axes, ["F2020", "F2023"]):
+    ax.plot(ages_prix, [prix_rente(tableau_mse.loc[nom], x) for x in ages_prix], "r-", lw=2, label="Modèle MSE")
+    ax.plot(ages_prix, [prix_rente(tableau_log_like.loc[nom], x) for x in ages_prix], "b--", lw=2,
+            label="Modèle log-vraisemblance")
+    ax.plot(ages_prix, prix_XR_courbe, "k-", lw=2, label="Table légale XR")
+    for x in ages_rentes:   # âges des tableaux (x = 50, 60, 70)
+        ax.axvline(x, color="gray", ls=":", lw=0.8)
+    ax.set(xlabel="Âge de souscription x", title=nom)
+axes[0].set_ylabel("Prix de la rente (euros)")
+axes[0].legend(frameon=False, fontsize=7)
+sauvegarder_figure("graphique_prix_rentes.png")
